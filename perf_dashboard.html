@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Performance Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+/* ===== RESET & BASE ===== */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e17;--card:#121a2b;--card-border:#1c2940;--card-hover:#182238;
+  --text:#e2e8f0;--text-dim:#8899b0;--text-muted:#4a5a72;
+  --accent-blue:#3b82f6;--accent-green:#10b981;--accent-red:#ef4444;--accent-amber:#f59e0b;--accent-purple:#8b5cf6;
+  --gradient-blue:linear-gradient(135deg,#3b82f6,#1d4ed8);
+  --gradient-green:linear-gradient(135deg,#10b981,#047857);
+  --gradient-red:linear-gradient(135deg,#ef4444,#b91c1c);
+  --gradient-amber:linear-gradient(135deg,#f59e0b,#d97706);
+  --radius:12px;--shadow:0 4px 24px rgba(0,0,0,.35);
+}
+html{font-size:14px}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+a{color:var(--accent-blue);text-decoration:none}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--card-border);border-radius:3px}
+
+/* ===== HEADER ===== */
+.header{
+  background:linear-gradient(180deg,#0f1626 0%,var(--bg) 100%);
+  border-bottom:1px solid var(--card-border);
+  padding:16px 32px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+  position:sticky;top:0;z-index:100;backdrop-filter:blur(10px);
+}
+.logo{display:flex;align-items:center;gap:10px}
+.logo svg{width:28px;height:28px}
+.logo h1{font-size:1.25rem;font-weight:700;letter-spacing:-.3px;background:linear-gradient(135deg,#60a5fa,#34d399);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.server-badge{background:var(--card);border:1px solid var(--card-border);padding:5px 14px;border-radius:20px;font-size:.8rem;color:var(--accent-blue);display:flex;align-items:center;gap:6px}
+.server-badge .dot{width:7px;height:7px;border-radius:50%;background:var(--accent-green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.header-controls{margin-left:auto;display:flex;align-items:center;gap:14px}
+select,button{font-family:inherit;font-size:.85rem}
+.date-select{background:var(--card);color:var(--text);border:1px solid var(--card-border);padding:7px 12px;border-radius:8px;cursor:pointer;outline:none}
+.date-select:focus{border-color:var(--accent-blue)}
+.refresh-toggle{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--text-dim);cursor:pointer;user-select:none}
+.refresh-toggle input{accent-color:var(--accent-green)}
+.last-updated{font-size:.75rem;color:var(--text-muted)}
+
+/* ===== THRESHOLD CONTROLS ===== */
+.threshold-group{display:flex;align-items:center;gap:6px;font-size:.78rem;color:var(--text-dim)}
+.threshold-group label{white-space:nowrap}
+.threshold-input{background:var(--card);color:var(--text);border:1px solid var(--card-border);padding:5px 8px;border-radius:6px;width:62px;text-align:center;font-size:.8rem;outline:none}
+.threshold-input:focus{border-color:var(--accent-blue)}
+.threshold-unit{color:var(--text-muted);font-size:.72rem}
+.threshold-bar{display:flex;align-items:center;gap:16px;padding:8px 32px;background:rgba(15,22,38,.6);border-bottom:1px solid var(--card-border);flex-wrap:wrap}
+.threshold-bar .sep{width:1px;height:20px;background:var(--card-border)}
+
+/* ===== LAYOUT ===== */
+.container{max-width:1440px;margin:0 auto;padding:20px 24px 40px}
+.grid{display:grid;gap:20px}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+.grid-2{grid-template-columns:repeat(2,1fr)}
+.grid-1{grid-template-columns:1fr}
+@media(max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.grid-4,.grid-2{grid-template-columns:1fr}}
+
+/* ===== CARDS ===== */
+.card{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);transition:border-color .2s,transform .15s}
+.card:hover{border-color:#2a3f5f;transform:translateY(-1px)}
+.card-title{font-size:.75rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.card-title .icon{width:16px;height:16px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center}
+
+/* ===== KPI CARDS ===== */
+.kpi{position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:var(--radius) var(--radius) 0 0}
+.kpi-blue::before{background:var(--gradient-blue)}
+.kpi-green::before{background:var(--gradient-green)}
+.kpi-red::before{background:var(--gradient-red)}
+.kpi-amber::before{background:var(--gradient-amber)}
+.kpi-value{font-size:2rem;font-weight:700;line-height:1.1;margin-bottom:6px}
+.kpi-sub{font-size:.78rem;color:var(--text-dim);display:flex;gap:14px;flex-wrap:wrap}
+.kpi-sub span{display:flex;align-items:center;gap:4px}
+.kpi-sub .label{color:var(--text-muted)}
+.kpi-peak{color:var(--accent-amber)!important;font-weight:600}
+
+/* ===== SECTION TITLE ===== */
+.section-title{font-size:.9rem;font-weight:600;margin-bottom:14px;padding-left:4px;display:flex;align-items:center;gap:8px}
+.section-title .line{flex:1;height:1px;background:var(--card-border)}
+
+/* ===== CHART CONTAINERS ===== */
+.chart-box{position:relative;height:280px}
+.chart-box-lg{height:320px}
+.chart-box-sm{height:300px}
+
+/* ===== ALERT TABLE ===== */
+.table-wrap{overflow-x:auto;max-height:400px;overflow-y:auto}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+thead{position:sticky;top:0;z-index:2}
+th{background:#182238;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:10px 12px;text-align:left;border-bottom:1px solid var(--card-border);font-size:.72rem}
+td{padding:9px 12px;border-bottom:1px solid rgba(28,41,64,.5);white-space:nowrap}
+tr:hover td{background:rgba(59,130,246,.04)}
+.severity-high{color:var(--accent-red);font-weight:700}
+.severity-med{color:var(--accent-amber);font-weight:600}
+.severity-low{color:var(--accent-green)}
+.process-name{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:600}
+.tag-red{background:rgba(239,68,68,.15);color:var(--accent-red)}
+.tag-amber{background:rgba(245,158,11,.15);color:var(--accent-amber)}
+.tag-green{background:rgba(16,185,129,.15);color:var(--accent-green)}
+
+/* ===== LOADING ===== */
+.loading{display:flex;align-items:center;justify-content:center;height:200px;color:var(--text-muted);gap:10px}
+.spinner{width:20px;height:20px;border:2px solid var(--card-border);border-top-color:var(--accent-blue);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ===== TAB BAR ===== */
+.tabs{display:flex;gap:2px;margin-bottom:16px;background:var(--card);border-radius:8px;padding:3px;border:1px solid var(--card-border);width:fit-content}
+.tab{padding:7px 16px;border-radius:6px;font-size:.8rem;cursor:pointer;color:var(--text-dim);transition:all .2s;user-select:none}
+.tab:hover{color:var(--text)}
+.tab.active{background:var(--accent-blue);color:#fff;font-weight:600}
+
+/* ===== EMPTY STATE ===== */
+.empty{text-align:center;padding:40px;color:var(--text-muted);font-size:.85rem}
+
+/* ===== TOOLTIP FIX ===== */
+.chartjs-tooltip{font-family:inherit!important}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="logo">
+    <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="url(#g1)"/><path d="M7 18l4-8 4 5 3-4 3 7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><defs><linearGradient id="g1" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#3b82f6"/><stop offset="1" stop-color="#10b981"/></linearGradient></defs></svg>
+    <h1>Performance Tracker</h1>
+  </div>
+  <div class="server-badge"><span class="dot"></span><span id="serverName">Loading...</span></div>
+  <div class="header-controls">
+    <select id="dateSelect" class="date-select"></select>
+    <label class="refresh-toggle"><input type="checkbox" id="autoRefresh" checked> Auto-refresh</label>
+    <span class="last-updated" id="lastUpdated"></span>
+  </div>
+</header>
+
+<!-- THRESHOLD BAR -->
+<div class="threshold-bar">
+  <div class="threshold-group">
+    <label>CPU Alert Threshold:</label>
+    <input type="number" id="cpuThreshold" class="threshold-input" value="80" min="0" max="200" step="5">
+    <span class="threshold-unit">%</span>
+  </div>
+  <div class="sep"></div>
+  <div class="threshold-group">
+    <label>Memory Alert Threshold:</label>
+    <input type="number" id="memThreshold" class="threshold-input" value="500" min="0" max="65536" step="50">
+    <span class="threshold-unit">MB</span>
+  </div>
+  <div class="sep"></div>
+  <button id="applyThresholds" style="background:var(--accent-blue);color:#fff;border:none;padding:5px 16px;border-radius:6px;font-size:.8rem;cursor:pointer;font-weight:600;transition:opacity .2s" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">Apply</button>
+  <span style="font-size:.72rem;color:var(--text-muted)">Processes exceeding these thresholds will appear as alerts</span>
+</div>
+
+<div class="container">
+
+  <!-- KPI CARDS -->
+  <div class="grid grid-4" style="margin-bottom:24px">
+    <div class="card kpi kpi-blue">
+      <div class="card-title"><span class="icon" style="background:rgba(59,130,246,.2);color:var(--accent-blue)">C</span> Host CPU</div>
+      <div class="kpi-value" style="color:var(--accent-blue)" id="kpiCpu">--</div>
+      <div class="kpi-sub">
+        <span><span class="label">Avg</span> <span id="kpiCpuAvg">--</span></span>
+        <span class="kpi-peak"><span class="label">Peak</span> <span id="kpiCpuMax">--</span></span>
+      </div>
+    </div>
+    <div class="card kpi kpi-green">
+      <div class="card-title"><span class="icon" style="background:rgba(16,185,129,.2);color:var(--accent-green)">M</span> Memory Usage</div>
+      <div class="kpi-value" style="color:var(--accent-green)" id="kpiMem">--</div>
+      <div class="kpi-sub">
+        <span><span class="label">Used</span> <span id="kpiMemUsed">--</span></span>
+        <span class="kpi-peak"><span class="label">Peak</span> <span id="kpiMemMax">--</span></span>
+      </div>
+    </div>
+    <div class="card kpi kpi-red">
+      <div class="card-title"><span class="icon" style="background:rgba(239,68,68,.2);color:var(--accent-red)">!</span> CPU Alerts</div>
+      <div class="kpi-value" style="color:var(--accent-red)" id="kpiCpuAlerts">--</div>
+      <div class="kpi-sub">
+        <span><span class="label">Processes</span> <span id="kpiCpuAlertProcs">--</span></span>
+        <span><span class="label">Top</span> <span id="kpiCpuAlertTop" class="process-name" style="max-width:120px">--</span></span>
+      </div>
+    </div>
+    <div class="card kpi kpi-amber">
+      <div class="card-title"><span class="icon" style="background:rgba(245,158,11,.2);color:var(--accent-amber)">!</span> Memory Alerts</div>
+      <div class="kpi-value" style="color:var(--accent-amber)" id="kpiMemAlerts">--</div>
+      <div class="kpi-sub">
+        <span><span class="label">Processes</span> <span id="kpiMemAlertProcs">--</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- HOST TIMELINE -->
+  <div class="section-title">Host Utilization Timeline <span class="line"></span></div>
+  <div class="grid grid-1" style="margin-bottom:24px">
+    <div class="card">
+      <div class="chart-box chart-box-lg"><canvas id="hostChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- DONUT CHARTS -->
+  <div class="section-title">Top Processes (Latest Snapshot) <span class="line"></span></div>
+  <div class="grid grid-2" style="margin-bottom:24px">
+    <div class="card">
+      <div class="card-title">Top Memory Consumers</div>
+      <div class="chart-box chart-box-sm"><canvas id="memDonut"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Top CPU Consumers</div>
+      <div class="chart-box chart-box-sm"><canvas id="cpuDonut"></canvas></div>
+    </div>
+  </div>
+
+  <!-- PROCESS TIMELINES -->
+  <div class="section-title">Process Resource Timeline <span class="line"></span></div>
+  <div class="grid grid-1" style="margin-bottom:4px">
+    <div class="tabs" id="timelineTabs">
+      <div class="tab active" data-metric="MEM">Memory</div>
+      <div class="tab" data-metric="CPU">CPU</div>
+    </div>
+  </div>
+  <div class="grid grid-1" style="margin-bottom:24px">
+    <div class="card">
+      <div class="chart-box chart-box-lg"><canvas id="processTimeline"></canvas></div>
+    </div>
+  </div>
+
+  <!-- CPU ALERT SCATTER -->
+  <div class="section-title">CPU Alert Events <span class="line"></span></div>
+  <div class="grid grid-1" style="margin-bottom:24px">
+    <div class="card">
+      <div class="chart-box"><canvas id="cpuAlertChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ALERT TABLES -->
+  <div class="section-title">Alert Details <span class="line"></span></div>
+  <div class="grid grid-1" style="margin-bottom:4px">
+    <div class="tabs" id="alertTabs">
+      <div class="tab active" data-type="cpu">CPU Alerts</div>
+      <div class="tab" data-type="mem">Memory Alerts</div>
+    </div>
+  </div>
+  <div class="grid grid-1" style="margin-bottom:24px">
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="table-wrap" id="alertTableWrap">
+        <table id="alertTable">
+          <thead id="alertThead"></thead>
+          <tbody id="alertTbody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="alertEmpty" style="display:none">No threshold alerts recorded for this date.</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ============================================================
+// CONFIG & STATE
+// ============================================================
+const API = '';
+let state = {
+  date: null,
+  autoRefresh: true,
+  refreshTimer: null,
+  timelineMetric: 'MEM',
+  alertType: 'cpu',
+  cpuThreshold: 80,
+  memThreshold: 500,
+  charts: {},
+};
+
+const COLORS = [
+  '#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6',
+  '#ec4899','#06b6d4','#84cc16','#f97316','#6366f1',
+  '#14b8a6','#e11d48','#a855f7','#22d3ee','#facc15'
+];
+
+function shortName(name) {
+  if (!name) return '';
+  // Extract meaningful part from long Quorum service names
+  let m = name.match(/ServiceHost_(\w+)/);
+  if (m) return 'SvcHost_' + m[1];
+  m = name.match(/ApiHost_(\w+)/);
+  if (m) return 'ApiHost_' + m[1];
+  // Remove instance suffix like #1, #2
+  return name.replace(/#\d+$/, '');
+}
+
+function formatTime(ts) {
+  if (!ts) return '';
+  const parts = ts.split(' ');
+  return parts.length > 1 ? parts[1] : ts;
+}
+
+function severityClass(val) {
+  if (val >= 95) return 'severity-high';
+  if (val >= 80) return 'severity-med';
+  return 'severity-low';
+}
+
+function severityTag(val) {
+  if (val >= 95) return '<span class="tag tag-red">CRITICAL</span>';
+  if (val >= 80) return '<span class="tag tag-amber">HIGH</span>';
+  return '<span class="tag tag-green">NORMAL</span>';
+}
+
+// ============================================================
+// FETCH HELPERS
+// ============================================================
+async function fetchJSON(url) {
+  const r = await fetch(API + url);
+  return r.json();
+}
+
+// ============================================================
+// INIT
+// ============================================================
+async function init() {
+  const [info, datesResp] = await Promise.all([
+    fetchJSON('/api/info'),
+    fetchJSON('/api/dates'),
+  ]);
+
+  document.getElementById('serverName').textContent = info.server_name || 'Server';
+
+  const sel = document.getElementById('dateSelect');
+  const dates = datesResp.dates || [];
+  dates.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = d;
+    sel.appendChild(opt);
+  });
+  if (dates.length) {
+    sel.value = dates[0];
+    state.date = dates[0];
+  }
+
+  sel.addEventListener('change', () => {
+    state.date = sel.value;
+    loadAll();
+  });
+
+  document.getElementById('autoRefresh').addEventListener('change', (e) => {
+    state.autoRefresh = e.target.checked;
+    setupRefresh();
+  });
+
+  // Tab handlers
+  document.querySelectorAll('#timelineTabs .tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#timelineTabs .tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      state.timelineMetric = tab.dataset.metric;
+      loadProcessTimeline();
+    });
+  });
+
+  document.querySelectorAll('#alertTabs .tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#alertTabs .tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      state.alertType = tab.dataset.type;
+      loadAlertTable();
+    });
+  });
+
+  // Threshold controls
+  document.getElementById('applyThresholds').addEventListener('click', () => {
+    state.cpuThreshold = parseFloat(document.getElementById('cpuThreshold').value) || 80;
+    state.memThreshold = parseFloat(document.getElementById('memThreshold').value) || 500;
+    loadAlerts(state.date);
+  });
+  // Also apply on Enter key
+  ['cpuThreshold', 'memThreshold'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('applyThresholds').click();
+    });
+  });
+
+  await loadAll();
+  setupRefresh();
+}
+
+function setupRefresh() {
+  if (state.refreshTimer) clearInterval(state.refreshTimer);
+  if (state.autoRefresh) {
+    state.refreshTimer = setInterval(() => {
+      const today = new Date().toISOString().slice(0, 10);
+      if (state.date === today) loadAll();
+    }, 30000);
+  }
+}
+
+// ============================================================
+// LOAD ALL DATA
+// ============================================================
+async function loadAll() {
+  const d = state.date;
+  document.getElementById('lastUpdated').textContent = 'Updating...';
+  try {
+    await Promise.all([
+      loadHost(d),
+      loadTopProcesses(d),
+      loadProcessTimeline(),
+      loadAlerts(d),
+    ]);
+  } catch(e) {
+    console.error('Load error:', e);
+  }
+  document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+// ============================================================
+// HOST CHART
+// ============================================================
+async function loadHost(d) {
+  const data = await fetchJSON(`/api/host?date=${d}`);
+  if (!data || !data.timestamps || !data.timestamps.length) return;
+  const s = data.summary || {};
+
+  // KPIs
+  document.getElementById('kpiCpu').textContent = s.cpu_current + '%';
+  document.getElementById('kpiCpuAvg').textContent = s.cpu_avg + '%';
+  document.getElementById('kpiCpuMax').textContent = s.cpu_max + '% @ ' + formatTime(s.cpu_max_time);
+  document.getElementById('kpiMem').textContent = s.mem_current_pct + '%';
+  document.getElementById('kpiMemUsed').textContent = (s.mem_current_mb / 1024).toFixed(1) + ' / ' + (data.total_ram_mb / 1024).toFixed(1) + ' GB';
+  document.getElementById('kpiMemMax').textContent = s.mem_max_pct + '% @ ' + formatTime(s.mem_max_time);
+
+  // Downsample for chart if too many points
+  let timestamps = data.timestamps;
+  let cpu = data.cpu_pct;
+  let mem = data.used_ram_pct;
+  if (timestamps.length > 600) {
+    const step = Math.ceil(timestamps.length / 500);
+    timestamps = timestamps.filter((_, i) => i % step === 0);
+    cpu = cpu.filter((_, i) => i % step === 0);
+    mem = mem.filter((_, i) => i % step === 0);
+  }
+  const labels = timestamps.map(formatTime);
+
+  if (state.charts.host) state.charts.host.destroy();
+  const ctx = document.getElementById('hostChart').getContext('2d');
+  state.charts.host = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'CPU %',
+          data: cpu,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,.1)',
+          fill: true,
+          tension: .3,
+          pointRadius: 0,
+          pointHitRadius: 6,
+          borderWidth: 2,
+        },
+        {
+          label: 'Memory %',
+          data: mem,
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16,185,129,.1)',
+          fill: true,
+          tension: .3,
+          pointRadius: 0,
+          pointHitRadius: 6,
+          borderWidth: 2,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', padding: 20 } },
+        tooltip: { backgroundColor: '#1e293b', titleColor: '#e2e8f0', bodyColor: '#94a3b8', borderColor: '#334155', borderWidth: 1, cornerRadius: 8, padding: 12 },
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(28,41,64,.5)' },
+          ticks: { color: '#4a5a72', maxTicksLimit: 20, maxRotation: 0, font: { size: 11 } },
+        },
+        y: {
+          min: 0, max: 100,
+          grid: { color: 'rgba(28,41,64,.5)' },
+          ticks: { color: '#4a5a72', callback: v => v + '%', font: { size: 11 } },
+        }
+      }
+    }
+  });
+}
+
+// ============================================================
+// TOP PROCESSES DONUTS
+// ============================================================
+async function loadTopProcesses(d) {
+  const [memData, cpuData] = await Promise.all([
+    fetchJSON(`/api/top-processes?date=${d}&metric=MEM`),
+    fetchJSON(`/api/top-processes?date=${d}&metric=CPU`),
+  ]);
+
+  renderDonut('memDonut', memData, 'MB');
+  renderDonut('cpuDonut', cpuData, '%');
+}
+
+function renderDonut(canvasId, data, unit) {
+  const procs = (data.processes || []).slice(0, 10);
+  if (!procs.length) return;
+
+  const labels = procs.map(p => shortName(p.name));
+  const values = procs.map(p => p.value);
+  const fullNames = procs.map(p => p.name);
+
+  if (state.charts[canvasId]) state.charts[canvasId].destroy();
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  state.charts[canvasId] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: COLORS.slice(0, procs.length),
+        borderColor: 'rgba(10,14,23,.8)',
+        borderWidth: 2,
+        hoverOffset: 6,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '60%',
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: { color: '#94a3b8', padding: 6, usePointStyle: true, pointStyle: 'circle', font: { size: 10.5 },
+            generateLabels(chart) {
+              const ds = chart.data.datasets[0];
+              return chart.data.labels.map((l, i) => ({
+                text: l + ' (' + ds.data[i] + (unit === 'MB' ? ' MB' : '%') + ')',
+                fillStyle: ds.backgroundColor[i],
+                fontColor: '#94a3b8',
+                hidden: false,
+                index: i,
+                pointStyle: 'circle',
+              }));
+            }
+          }
+        },
+        tooltip: {
+          backgroundColor: '#1e293b', titleColor: '#e2e8f0', bodyColor: '#94a3b8', borderColor: '#334155', borderWidth: 1, cornerRadius: 8,
+          callbacks: {
+            title(items) { return fullNames[items[0].dataIndex]; },
+            label(item) { return ' ' + item.parsed + (unit === 'MB' ? ' MB' : '%'); }
+          }
+        }
+      }
+    }
+  });
+}
+
+// ============================================================
+// PROCESS TIMELINE
+// ============================================================
+async function loadProcessTimeline() {
+  const d = state.date;
+  const metric = state.timelineMetric;
+  const data = await fetchJSON(`/api/process-timeline?date=${d}&metric=${metric}&top=8`);
+  if (!data || !data.timestamps || !data.timestamps.length) return;
+
+  const labels = data.timestamps.map(formatTime);
+  const datasets = (data.series || []).map((s, i) => ({
+    label: shortName(s.name),
+    data: s.data,
+    borderColor: COLORS[i % COLORS.length],
+    backgroundColor: 'transparent',
+    tension: .3,
+    pointRadius: 0,
+    pointHitRadius: 6,
+    borderWidth: 1.8,
+  }));
+
+  if (state.charts.processTimeline) state.charts.processTimeline.destroy();
+  const ctx = document.getElementById('processTimeline').getContext('2d');
+  state.charts.processTimeline = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', padding: 14, font: { size: 11 } } },
+        tooltip: { backgroundColor: '#1e293b', titleColor: '#e2e8f0', bodyColor: '#94a3b8', borderColor: '#334155', borderWidth: 1, cornerRadius: 8, padding: 12,
+          callbacks: {
+            label(item) {
+              const unit = metric === 'MEM' ? ' MB' : '%';
+              return ' ' + item.dataset.label + ': ' + item.parsed.y + unit;
+            }
+          }
+        },
+      },
+      scales: {
+        x: { grid: { color: 'rgba(28,41,64,.5)' }, ticks: { color: '#4a5a72', maxTicksLimit: 20, maxRotation: 0, font: { size: 11 } } },
+        y: { grid: { color: 'rgba(28,41,64,.5)' }, ticks: { color: '#4a5a72', font: { size: 11 }, callback: v => metric === 'MEM' ? v + ' MB' : v + '%' }, beginAtZero: true },
+      }
+    }
+  });
+}
+
+// ============================================================
+// ALERTS
+// ============================================================
+let _cpuAlerts = null, _memAlerts = null;
+
+async function loadAlerts(d) {
+  const [cpuData, memData] = await Promise.all([
+    fetchJSON(`/api/cpu-alerts?date=${d}&threshold=${state.cpuThreshold}`),
+    fetchJSON(`/api/mem-alerts?date=${d}&threshold=${state.memThreshold}`),
+  ]);
+  _cpuAlerts = cpuData;
+  _memAlerts = memData;
+
+  // KPIs
+  const cs = cpuData.summary || {};
+  document.getElementById('kpiCpuAlerts').textContent = cs.total_count || 0;
+  document.getElementById('kpiCpuAlertProcs').textContent = cs.unique_processes || 0;
+  document.getElementById('kpiCpuAlertTop').textContent = shortName(cs.top_offender) || '-';
+
+  const ms = memData.summary || {};
+  document.getElementById('kpiMemAlerts').textContent = ms.total_count || 0;
+  document.getElementById('kpiMemAlertProcs').textContent = ms.unique_processes || 0;
+
+  renderCpuAlertChart(cpuData);
+  loadAlertTable();
+}
+
+function renderCpuAlertChart(data) {
+  const alerts = data.alerts || [];
+  if (!alerts.length) {
+    if (state.charts.cpuAlert) state.charts.cpuAlert.destroy();
+    return;
+  }
+
+  // Group by process for coloring
+  const procSet = [...new Set(alerts.map(a => a.process))];
+  const procColor = {};
+  procSet.forEach((p, i) => procColor[p] = COLORS[i % COLORS.length]);
+
+  // Build scatter data grouped by process
+  const datasets = procSet.map(proc => {
+    const points = alerts.filter(a => a.process === proc).map(a => ({
+      x: formatTime(a.timestamp),
+      y: a.cpu_pct,
+      pid: a.pid,
+      service: a.service,
+      fullTime: a.timestamp,
+    }));
+    return {
+      label: shortName(proc),
+      data: points,
+      backgroundColor: procColor[proc],
+      borderColor: procColor[proc],
+      pointRadius: 4,
+      pointHoverRadius: 7,
+    };
+  });
+
+  // Collect all unique time labels in order
+  const allTimes = [...new Set(alerts.map(a => formatTime(a.timestamp)))];
+
+  if (state.charts.cpuAlert) state.charts.cpuAlert.destroy();
+  const ctx = document.getElementById('cpuAlertChart').getContext('2d');
+  state.charts.cpuAlert = new Chart(ctx, {
+    type: 'scatter',
+    data: { labels: allTimes, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', padding: 14, font: { size: 11 } } },
+        tooltip: {
+          backgroundColor: '#1e293b', titleColor: '#e2e8f0', bodyColor: '#94a3b8', borderColor: '#334155', borderWidth: 1, cornerRadius: 8,
+          callbacks: {
+            title(items) { return items[0].raw.fullTime; },
+            label(item) {
+              const r = item.raw;
+              return [
+                ' Process: ' + item.dataset.label,
+                ' CPU: ' + r.y + '%',
+                ' PID: ' + r.pid,
+                r.service ? ' Service: ' + r.service : '',
+              ].filter(Boolean);
+            }
+          }
+        },
+      },
+      scales: {
+        x: {
+          type: 'category',
+          labels: allTimes,
+          grid: { color: 'rgba(28,41,64,.5)' },
+          ticks: { color: '#4a5a72', maxTicksLimit: 20, maxRotation: 0, font: { size: 11 } },
+        },
+        y: {
+          grid: { color: 'rgba(28,41,64,.5)' },
+          ticks: { color: '#4a5a72', callback: v => v + '%', font: { size: 11 } },
+          beginAtZero: false,
+        }
+      }
+    }
+  });
+}
+
+function loadAlertTable() {
+  const type = state.alertType;
+  const data = type === 'cpu' ? _cpuAlerts : _memAlerts;
+  const alerts = (data && data.alerts) || [];
+  const thead = document.getElementById('alertThead');
+  const tbody = document.getElementById('alertTbody');
+  const emptyEl = document.getElementById('alertEmpty');
+
+  if (!alerts.length) {
+    thead.innerHTML = '';
+    tbody.innerHTML = '';
+    emptyEl.style.display = 'block';
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  if (type === 'cpu') {
+    thead.innerHTML = '<tr><th>Time</th><th>Severity</th><th>Process</th><th>PID</th><th>CPU %</th><th>Service</th></tr>';
+    // Show latest first, cap at 500 rows
+    const rows = alerts.slice().reverse().slice(0, 500);
+    tbody.innerHTML = rows.map(a => {
+      const cls = severityClass(a.cpu_pct);
+      return `<tr>
+        <td>${formatTime(a.timestamp)}</td>
+        <td>${severityTag(a.cpu_pct)}</td>
+        <td class="process-name" title="${a.process}">${shortName(a.process)}</td>
+        <td>${a.pid}</td>
+        <td class="${cls}">${a.cpu_pct}%</td>
+        <td>${a.service || '-'}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    thead.innerHTML = '<tr><th>Time</th><th>Process</th><th>PID</th><th>Memory (MB)</th><th>% of RAM</th><th>Service</th></tr>';
+    const rows = alerts.slice().reverse().slice(0, 500);
+    tbody.innerHTML = rows.map(a => `<tr>
+        <td>${formatTime(a.timestamp)}</td>
+        <td class="process-name" title="${a.process}">${shortName(a.process)}</td>
+        <td>${a.pid}</td>
+        <td>${a.mem_mb} MB</td>
+        <td>${a.mem_pct}%</td>
+        <td>${a.service || '-'}</td>
+      </tr>`).join('');
+  }
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+init();
+</script>
+</body>
+</html>
