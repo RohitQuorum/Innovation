@@ -18,11 +18,17 @@ from urllib.parse import urlparse, parse_qs
 from collections import defaultdict
 from threading import Lock
 
-CSV_DIR = r"C:\Users\rohit.gaikwad\OneDrive - Quorum Business Solutions\perf"
-PORT = 8890
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "servers_config.json")
+CSV_DIR = r"C:\Users\rohit.gaikwad\OneDrive - Quorum Business Solutions\perf2"
+PORT = 8891
+TARGET_SERVER = "QDTQENWEB02.qdev.net"
 COLLECTOR_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Collect-PerfData.ps1")
 SERVER_PATTERN = re.compile(r"host_(.+?)_(\d{4}-\d{2}-\d{2})\.csv")
+
+# Global collectors management
+_collectors = {}  # {server_name: subprocess.Popen}
+_collectors_lock = Lock()
+
+os.makedirs(CSV_DIR, exist_ok=True)
 
 # Global collectors management
 _collectors = {}  # {server_name: subprocess.Popen}
@@ -491,7 +497,7 @@ class PerfHandler(http.server.BaseHTTPRequestHandler):
 # PowerShell collector management
 # ---------------------------------------------------------------------------
 _collector_proc = None
-COLLECTOR_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collector.log")
+COLLECTOR_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collector2.log")
 
 
 def start_collector():
@@ -500,12 +506,15 @@ def start_collector():
         print(f"[WARN] Collector script not found: {COLLECTOR_SCRIPT}")
         print("       Dashboard will work with existing CSV data only.\n")
         return
+    
     cmd = [
         "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", COLLECTOR_SCRIPT,
         "-Server", TARGET_SERVER,
+        "-OutDir", CSV_DIR,
     ]
     print(f"[OK]  Launching collector: {TARGET_SERVER}")
+    print(f"[OK]  Data directory: {CSV_DIR}")
     log_fh = open(COLLECTOR_LOG, "w", encoding="utf-8")
     _collector_proc = subprocess.Popen(
         cmd,
@@ -536,7 +545,6 @@ if __name__ == "__main__":
     print("=== Server Performance Tracker ===")
     print(f"CSV directory : {CSV_DIR}")
     print(f"Server name   : {cache.get_server_name()}")
-    print(f"Target server : {TARGET_SERVER}")
     print(f"Available dates: {', '.join(cache.available_dates())}")
     print(f"Local URL     : http://localhost:{PORT}")
     print(f"Network URL   : http://10.11.33.183:{PORT}")

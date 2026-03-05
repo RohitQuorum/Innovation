@@ -1,5 +1,5 @@
 """
-Server Performance Tracker - Backend Server
+Server Performance Tracker - Backend Server (Multi-Server Support)
 Reads CSV performance data and serves JSON API + HTML dashboard.
 Threshold filtering is done dynamically from all_*.csv data.
 """
@@ -16,13 +16,59 @@ import sys
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from collections import defaultdict
+from threading import Lock
 
-CSV_DIR = r"C:\Users\rohit.gaikwad\OneDrive - Quorum Business Solutions\perf"
-PORT = 8890
-TARGET_SERVER = "QDDEATAPP01.qdev.net"
+CSV_DIR = r"C:\Users\rohit.gaikwad\OneDrive - Quorum Business Solutions\perf3"
+PORT = 8892
+TARGET_SERVER = "QDTQENMT02.qdev.net"
 COLLECTOR_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Collect-PerfData.ps1")
 SERVER_PATTERN = re.compile(r"host_(.+?)_(\d{4}-\d{2}-\d{2})\.csv")
 
+# Global collectors management
+_collectors = {}  # {server_name: subprocess.Popen}
+_collectors_lock = Lock()
+
+os.makedirs(CSV_DIR, exist_ok=True)
+
+# Global collectors management
+_collectors = {}  # {server_name: subprocess.Popen}
+_collectors_lock = Lock()
+
+
+# ---------------------------------------------------------------------------
+# Server Configuration Management
+# ---------------------------------------------------------------------------
+def load_server_config():
+    """Load server configuration from JSON file"""
+    if not os.path.exists(CONFIG_FILE):
+        default_config = {
+            "servers": [
+                {"name": "QDDEATAPP01.qdev.net", "enabled": True}
+            ]
+        }
+        save_server_config(default_config)
+        return default_config
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load config: {e}")
+        return {"servers": []}
+
+def save_server_config(config):
+    """Save server configuration to JSON file"""
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to save config: {e}")
+        return False
+
+def get_enabled_servers():
+    """Get list of enabled servers from config"""
+    config = load_server_config()
+    return [s["name"] for s in config.get("servers", []) if s.get("enabled", True)]
 
 # ---------------------------------------------------------------------------
 # Data cache – parses CSVs into memory, refreshes today's data every 30s
@@ -60,30 +106,30 @@ class DataCache:
         files = glob.glob(writing)
         return files[0] if files else None
 
-    def _server_slug(self):
+    def _get_all_server_slugs(self):
+        """Find all server slugs in CSV directory"""
+        slugs = set()
         for f in os.listdir(self.csv_dir):
             m = SERVER_PATTERN.match(f)
             if m:
-                return m.group(1)
-        # Also check _writing files
-        for f in os.listdir(self.csv_dir):
-            if f.startswith("host_") and f.endswith("_writing.csv"):
-                parts = f.replace("host_", "").replace("_writing.csv", "")
+                slugs.add(m.group(1))
+            # Also check _writing files
+            elif f.startswith("host_") and (f.endswith("_writing.csv") or f.endswith(".csv")):
+                parts = f.replace("host_", "").replace("_writing.csv", "").replace(".csv", "")
                 date_part = parts[-10:]
                 slug = parts[: -(len(date_part) + 1)]
-                return slug
-        for f in os.listdir(self.csv_dir):
-            if f.startswith("host_") and not f.endswith("_writing.csv"):
-                parts = f.replace("host_", "").replace(".csv", "")
-                date_part = parts[-10:]
-                slug = parts[: -(len(date_part) + 1)]
-                return slug
-        return None
+                slugs.add(slug)
+        return list(slugs)
+
+    def get_all_servers(self):
+        """Get list of all servers with data"""
+        slugs = self._get_all_server_slugs()
+        return [{"slug": s, "name": s.replace("_", ".")} for s in slugs]
 
     def get_server_slug(self):
-        if not hasattr(self, "_slug"):
-            self._slug = self._server_slug()
-        return self._slug
+        """Get first available server slug (for backward compatibility)"""
+        slugs = self._get_all_server_slugs()
+        return slugs[0] if slugs else None
 
     def get_server_name(self):
         slug = self.get_server_slug()
@@ -353,7 +399,6 @@ class PerfHandler(http.server.BaseHTTPRequestHandler):
 
         routes = {
             "/": self._serve_html,
-            "/hub.html": self._serve_hub,
             "/api/info": self._api_info,
             "/api/dates": self._api_dates,
             "/api/host": self._api_host,
@@ -386,18 +431,6 @@ class PerfHandler(http.server.BaseHTTPRequestHandler):
             os.path.dirname(os.path.abspath(__file__)), "perf_dashboard.html"
         )
         with open(html_path, "r", encoding="utf-8") as f:
-            content = f.read().encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
-
-    def _serve_hub(self, _params):
-        hub_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "hub.html"
-        )
-        with open(hub_path, "r", encoding="utf-8") as f:
             content = f.read().encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -464,7 +497,7 @@ class PerfHandler(http.server.BaseHTTPRequestHandler):
 # PowerShell collector management
 # ---------------------------------------------------------------------------
 _collector_proc = None
-COLLECTOR_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collector.log")
+COLLECTOR_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collector3.log")
 
 
 def start_collector():
@@ -473,12 +506,15 @@ def start_collector():
         print(f"[WARN] Collector script not found: {COLLECTOR_SCRIPT}")
         print("       Dashboard will work with existing CSV data only.\n")
         return
+    
     cmd = [
         "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", COLLECTOR_SCRIPT,
         "-Server", TARGET_SERVER,
+        "-OutDir", CSV_DIR,
     ]
     print(f"[OK]  Launching collector: {TARGET_SERVER}")
+    print(f"[OK]  Data directory: {CSV_DIR}")
     log_fh = open(COLLECTOR_LOG, "w", encoding="utf-8")
     _collector_proc = subprocess.Popen(
         cmd,
@@ -509,9 +545,10 @@ if __name__ == "__main__":
     print("=== Server Performance Tracker ===")
     print(f"CSV directory : {CSV_DIR}")
     print(f"Server name   : {cache.get_server_name()}")
-    print(f"Target server : {TARGET_SERVER}")
     print(f"Available dates: {', '.join(cache.available_dates())}")
-    print(f"Dashboard URL : http://localhost:{PORT}")
+    print(f"Local URL     : http://localhost:{PORT}")
+    print(f"Network URL   : http://10.11.33.183:{PORT}")
+    print("\nShare the Network URL with your team to access the dashboard")
     print("Press Ctrl+C to stop.\n")
 
     start_collector()

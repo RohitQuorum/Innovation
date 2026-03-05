@@ -1,7 +1,7 @@
 === Performance Collector ===
-Server   : QDDEATAPP01
+Server   : QDTQENWEB02.qdev.net
 Interval : 5s | Top 15 processes | Publish every 30s
-Output   : C:\Users\rohit.gaikwad\OneDrive - Quorum Business Solutions\perf
+Output   : C:\Users\rohit.gaikwad\OneDrive - Quorum Business Solutions\perf2
 Press Ctrl+C to stop.
 
 Loading service cache...

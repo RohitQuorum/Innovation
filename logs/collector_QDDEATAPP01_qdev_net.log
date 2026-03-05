@@ -1,9 +1,0 @@
-=== Performance Collector ===
-Server   : QDDEATAPP01.qdev.net
-Interval : 5s | Top 15 processes | Publish every 30s
-Output   : C:\Users\rohit.gaikwad\OneDrive - Quorum Business Solutions\perf
-Press Ctrl+C to stop.
-
-Loading service cache...
-Cached 0 PID-to-service mappings.
-
